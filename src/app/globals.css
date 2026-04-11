@@ -133,32 +133,9 @@
   }
 }
 
-/* Smooth accordion open/close */
-[data-slot="card-content"] {
-  animation: slideDown 200ms ease-out;
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
+/* Active button press effect - only visual, no pointer blocking */
+@media (hover: hover) {
+  button:active:not(:disabled) {
+    transform: scale(0.97);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Active button press effect */
-button:active:not(:disabled) {
-  transform: scale(0.97);
-  transition: transform 100ms;
-}
-
-/* SVG vertebra hover glow */
-g[role="button"]:hover rect,
-g[role="button"]:hover path,
-g[role="button"]:hover ellipse {
-  filter: brightness(1.2);
-  transition: filter 150ms;
 }
