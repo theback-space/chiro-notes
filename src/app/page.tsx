@@ -10,20 +10,27 @@ import { VisitPresets } from '@/components/exam/visit-presets';
 import { NoteBuilder } from '@/components/note/note-builder';
 import { NotePreview } from '@/components/output/note-preview';
 import { SettingsPanel } from '@/components/settings/settings-panel';
-import { ConfigProvider } from '@/hooks/use-config';
+import { ConfigProvider, useConfig } from '@/hooks/use-config';
+import { SpecialtySelector } from '@/components/specialty-selector';
 import { haptic } from '@/hooks/use-haptic';
 
 function AppContent() {
   const state = useNoteState();
   const dispatch = useNoteDispatch();
   const completion = useNoteCompletion(state);
+  const { config, hasConfig, switchSpecialty } = useConfig();
   const isNewOrReactivation = state.subjective.visitType === 'new' || state.subjective.visitType === 'reactivation';
+
+  // Show specialty selector on first launch
+  if (!hasConfig) {
+    return <SpecialtySelector onSelect={(s) => { switchSpecialty(s); dispatch({ type: 'RESET_ALL' }); }} />;
+  }
 
   return (
     <div className="flex flex-col h-dvh max-h-dvh overflow-hidden">
       {/* Header */}
       <header className="shrink-0 flex items-center justify-between px-4 h-12 border-b border-[#c9a84c]/10 bg-background/95 backdrop-blur">
-        <h1 className="text-xs font-bold tracking-[0.25em] uppercase text-[#c9a84c]">THE-BACK.SPACE</h1>
+        <h1 className="text-xs font-bold tracking-[0.25em] uppercase text-[#c9a84c]">{config.branding.headerText}</h1>
         <span className="text-xs text-[#c9a84c]/60 font-medium tracking-wider">{completion.count}/{completion.total}</span>
       </header>
 

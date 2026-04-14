@@ -1,175 +1,225 @@
 import type { NoteState } from './types';
-import { buildMatrixObjective, getJointRestrictionSegments } from '@/data/segments';
-import { ORTHO_NEURO_TESTS, ROM_REGIONS, ROM_GRADE_OPTIONS } from '@/data/ortho-tests';
-import { selectVariant, LOCKED_ASSESSMENT, VERBAL_CONSENT } from '@/data/note-phrases';
-import {
-  REGION_OPTIONS, expandConcern, TOLERANCE_OPTIONS, IMPROVEMENT_OPTIONS,
-  TECHNIQUE_OPTIONS, POSITION_OPTIONS, POSTURE_OPTIONS, PALPATION_OPTIONS,
-  PLAN_ADDON_OPTIONS, FOLLOWUP_OPTIONS, PROCEDURE_REGION_OPTIONS,
-} from '@/data/soap-options';
+import type { AppConfig } from './config-schema';
 
 function getLabel(value: string, options: { value: string; label: string }[]): string {
   if (!value) return '';
   return options.find(o => o.value === value)?.label || value;
 }
 
-// ─── SUBJECTIVE ──────────────────────────────────────────────────────────────
+function getDailyHash(): number {
+  const d = new Date();
+  const s = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+  return Math.abs(h);
+}
 
-function buildSubjective(state: NoteState): string {
+function pickVariant(phrases: string[]): string {
+  if (!phrases || phrases.length === 0) return '';
+  return phrases[getDailyHash() % phrases.length];
+}
+
+function expandConcern(value: string, options: { value: string; label: string; expandedLabel?: string }[]): string {
+  const opt = options.find(o => o.value === value);
+  return opt?.expandedLabel || opt?.label?.toLowerCase() || value;
+}
+
+// ─── Build matrix objective from config-driven findings ──────────────────────
+
+function buildMatrixObjective(state: NoteState, config: AppConfig): string[] {
+  const lines: string[] = [];
+  if (!config.matrix.enabled) return lines;
+
+  const { regions, findingTypes } = config.matrix;
+
+  // Group findings by type
+  const byType: Record<string, string[]> = {};
+  for (const ft of findingTypes) byType[ft.key] = [];
+
+  for (const region of regions) {
+    const seg = state.segmentMatrix[region.id];
+    if (!seg) continue;
+
+    for (const ft of findingTypes) {
+      const hasL = !!seg[`${ft.key}L`];
+      const hasR = !!seg[`${ft.key}R`];
+      if (!hasL && !hasR) continue;
+
+      const side = hasL && hasR ? 'bilaterally' : hasL ? 'on the left' : 'on the right';
+      byType[ft.key].push(`${region.label} ${side}`);
+    }
+  }
+
+  // Generate sentences per finding type
+  for (const ft of findingTypes) {
+    const items = byType[ft.key];
+    if (items.length === 0) continue;
+    lines.push(`${ft.fullLabel} noted at ${items.join(', ')}.`);
+  }
+
+  return lines;
+}
+
+function getMatrixFindingIds(state: NoteState, config: AppConfig): string[] {
+  if (!config.matrix.enabled) return [];
+  const ids: string[] = [];
+  for (const region of config.matrix.regions) {
+    const seg = state.segmentMatrix[region.id];
+    if (!seg) continue;
+    const hasAny = config.matrix.findingTypes.some(ft => seg[`${ft.key}L`] || seg[`${ft.key}R`]);
+    if (hasAny) ids.push(region.label);
+  }
+  return ids;
+}
+
+// ─── SOAP/DAP generators ─────────────────────────────────────────────────────
+
+function buildSubjective(state: NoteState, config: AppConfig): string {
   const s = state.subjective;
   const lines: string[] = [];
+  const key = s.visitType === 'reactivation' ? 'reactivation' : s.visitType === 'new' ? 'new' : 'ongoing';
+  const opening = pickVariant(config.templates.openingPhrases[key]);
 
-  const opening = selectVariant(`opening_${s.visitType}`);
-  const regionLabels = (s.regions || []).filter(Boolean).map(r => {
-    const label = getLabel(r, REGION_OPTIONS) || r || '';
-    return label.toLowerCase().replace('ctl (cervical/thoracic/lumbar)', 'cervical, thoracic, and lumbar');
-  });
-  const concernLabels = (s.concerns || []).filter(Boolean).map(c => expandConcern(c));
+  const regionLabels = (s.regions || []).filter(Boolean).map(r => getLabel(r, config.options.regions).toLowerCase());
+  const concernLabels = (s.concerns || []).filter(Boolean).map(c => expandConcern(c, config.options.concerns));
 
   let complaint = '';
-  if (regionLabels.length > 0 && concernLabels.length > 0) {
-    complaint = `${regionLabels.join(' and ')} ${concernLabels.join(', ')}`;
-  } else if (regionLabels.length > 0) {
-    complaint = `${regionLabels.join(' and ')} region${regionLabels.length > 1 ? 's' : ''}`;
-  } else if (concernLabels.length > 0) {
-    complaint = concernLabels.join(', ');
-  } else {
-    complaint = 'general wellness maintenance';
-  }
+  if (regionLabels.length > 0 && concernLabels.length > 0) complaint = `${regionLabels.join(' and ')} ${concernLabels.join(', ')}`;
+  else if (regionLabels.length > 0) complaint = `${regionLabels.join(' and ')} region${regionLabels.length > 1 ? 's' : ''}`;
+  else if (concernLabels.length > 0) complaint = concernLabels.join(', ');
+  else complaint = 'general wellness maintenance';
 
   lines.push(`${opening} ${complaint}.`);
-  if (s.adverseResponse) lines.push(selectVariant('adverse_denial'));
-  if (s.newSensations) lines.push(selectVariant('no_new_sensations'));
-  if (s.visitType === 'new' || s.visitType === 'reactivation') {
-    lines.push('No VBI or other neurological or orthopedic-related symptoms reported.');
+  if (s.adverseResponse) lines.push(pickVariant(config.templates.adverseDenialPhrases));
+  if (s.newSensations) lines.push(pickVariant(config.templates.noNewSensationsPhrases));
+  if ((s.visitType === 'new' || s.visitType === 'reactivation') && config.templates.vbiStatement) {
+    lines.push(config.templates.vbiStatement);
   }
 
   return lines.join(' ');
 }
 
-// ─── OBJECTIVE ───────────────────────────────────────────────────────────────
-// Compiles ALL matrix checkbox findings into clinical sentences
-
-function buildObjective(state: NoteState): string {
+function buildObjective(state: NoteState, config: AppConfig): string {
   const lines: string[] = [];
 
-  // 1. Motion palpation intro with joint restriction segments
-  const jrSegments = getJointRestrictionSegments(state.segmentMatrix);
-  if (jrSegments.length > 0) {
-    const intro = selectVariant('motion_palpation_intro');
-    lines.push(`${intro} ${jrSegments.join(', ')}.`);
+  // Matrix findings
+  const findingIds = getMatrixFindingIds(state, config);
+  if (findingIds.length > 0) {
+    const intro = pickVariant(config.templates.objectiveIntros);
+    lines.push(`${intro} ${findingIds.join(', ')}.`);
   }
 
-  // 2. Build detailed findings from matrix (JR, TP, TM, Other with sides)
-  const matrixLines = buildMatrixObjective(state.segmentMatrix);
-  for (const line of matrixLines) {
-    // Skip the JR line if we already have the motion palpation intro
-    if (jrSegments.length > 0 && line.startsWith('Segmental joint restriction')) continue;
-    lines.push(line);
+  const matrixLines = buildMatrixObjective(state, config);
+  lines.push(...matrixLines);
+
+  // ROM
+  if (config.romAssessment.enabled) {
+    for (const [regionId, grade] of Object.entries(state.romAssessment)) {
+      if (!grade) continue;
+      const label = config.romAssessment.regions.find(r => r.id === regionId)?.label || regionId;
+      const gradeLabel = config.romAssessment.grades.find(g => g.value === grade)?.label.toLowerCase() || grade;
+      lines.push(grade === 'wnl' ? `${label} within normal limits.` : `${label} ${gradeLabel}.`);
+    }
   }
 
-  // If no JR segments but other findings exist, still include the detailed lines
-  if (jrSegments.length === 0 && matrixLines.length > 0) {
-    // matrixLines already includes everything
+  // Tests
+  if (config.tests.enabled) {
+    for (const test of state.orthoNeuroTests) {
+      if (test.result === 'not-tested') continue;
+      const def = config.tests.items.find(t => t.id === test.test);
+      const name = def?.label || test.test;
+      const result = test.result === 'positive' ? 'positive' : test.result === 'negative' ? 'negative' : 'within normal limits';
+      const side = test.side === 'left' ? ' on the left' : test.side === 'right' ? ' on the right' : test.side === 'bilateral' ? ' bilaterally' : '';
+      lines.push(`${name} ${result}${side}.`);
+    }
   }
 
-  // 3. ROM assessment (new/reactivation)
-  for (const [regionId, grade] of Object.entries(state.romAssessment)) {
-    if (!grade) continue;
-    const regionLabel = ROM_REGIONS.find(r => r.id === regionId)?.label || regionId;
-    const gradeLabel = ROM_GRADE_OPTIONS.find(g => g.value === grade)?.label.toLowerCase() || grade;
-    lines.push(grade === 'wnl' ? `${regionLabel} within normal limits.` : `${regionLabel} ${gradeLabel}.`);
-  }
-
-  // 4. Ortho/neuro tests (only performed ones)
-  for (const test of state.orthoNeuroTests) {
-    if (test.result === 'not-tested') continue;
-    const testDef = ORTHO_NEURO_TESTS.find(t => t.id === test.test);
-    const testName = testDef?.label || test.test;
-    const resultText = test.result === 'positive' ? 'positive' : test.result === 'negative' ? 'negative' : 'within normal limits';
-    const sideText = test.side === 'left' ? ' on the left' : test.side === 'right' ? ' on the right' : test.side === 'bilateral' ? ' bilaterally' : '';
-    lines.push(`${testName} ${resultText}${sideText}.`);
-  }
-
-  // 5. Posture
+  // Posture + palpation
   if (state.objective.posture.length > 0) {
-    lines.push(`Postural observation: ${state.objective.posture.map(p => getLabel(p, POSTURE_OPTIONS).toLowerCase()).join(', ')}.`);
+    lines.push(`Postural observation: ${state.objective.posture.map(p => getLabel(p, config.options.posture).toLowerCase()).join(', ')}.`);
   }
-
-  // 6. Palpation
   if (state.objective.palpation.length > 0) {
-    lines.push(`Palpation: ${state.objective.palpation.map(p => getLabel(p, PALPATION_OPTIONS).toLowerCase()).join(', ')}.`);
+    lines.push(`Palpation: ${state.objective.palpation.map(p => getLabel(p, config.options.palpation).toLowerCase()).join(', ')}.`);
   }
 
   return lines.join(' ');
 }
 
-// ─── PROCEDURES ──────────────────────────────────────────────────────────────
-
-function buildProcedures(state: NoteState): string {
+function buildProcedures(state: NoteState, config: AppConfig): string {
   const lines: string[] = [];
+
+  // For mental health, show interventions instead of procedures
+  if (config.noteFormat === 'dap' && config.options.interventions) {
+    const interventions = (state as any).interventions as string[] || [];
+    if (interventions.length > 0) {
+      const labels = interventions.map(i => {
+        const opt = config.options.interventions?.find(o => o.value === i);
+        return opt?.noteText || opt?.label || i;
+      });
+      return `Interventions utilized: ${labels.join(', ')}.`;
+    }
+    return '';
+  }
 
   for (const [region, proc] of Object.entries(state.procedures)) {
     if (!proc.technique) continue;
-    const regionLabel = PROCEDURE_REGION_OPTIONS.find(o => o.value === region)?.label || region;
-    const techOpt = TECHNIQUE_OPTIONS.find(o => o.value === proc.technique);
+    const regionLabel = getLabel(region, config.options.procedureRegions);
+    const techOpt = config.options.techniques.find(o => o.value === proc.technique);
     const techText = techOpt?.noteText || techOpt?.label || proc.technique;
-    const posLabel = proc.position ? POSITION_OPTIONS.find(o => o.value === proc.position)?.label.toLowerCase() || proc.position : '';
+    const posLabel = proc.position ? getLabel(proc.position, config.options.positions).toLowerCase() : '';
     lines.push(posLabel ? `${regionLabel} ${techText} – ${posLabel}` : `${regionLabel} ${techText}`);
   }
 
-  if (lines.length > 0) lines.push(VERBAL_CONSENT);
+  if (lines.length > 0 && config.templates.consentLine) lines.push(config.templates.consentLine);
   return lines.join('\n');
 }
 
-// ─── RESPONSE ────────────────────────────────────────────────────────────────
-
-function buildResponse(state: NoteState): string {
+function buildResponse(state: NoteState, config: AppConfig): string {
   const parts: string[] = [];
-  const r = state.response;
-
-  if (r.tolerance) {
-    if (r.tolerance === 'tolerated-well') parts.push(selectVariant('tolerance_well'));
-    else if (r.tolerance === 'without-incident') parts.push(selectVariant('tolerance_without_incident'));
-    else parts.push(`Client ${getLabel(r.tolerance, TOLERANCE_OPTIONS).toLowerCase()}.`);
+  if (state.response.tolerance) {
+    if (state.response.tolerance === 'tolerated-well') parts.push(pickVariant(config.templates.tolerancePhrases.well));
+    else if (state.response.tolerance === 'without-incident') parts.push(pickVariant(config.templates.tolerancePhrases.withoutIncident));
+    else parts.push(`Client ${getLabel(state.response.tolerance, config.options.tolerance).toLowerCase()}.`);
   }
-
-  const real = r.improvements.filter(i => i !== 'none-reported');
-  if (real.length > 0) {
-    parts.push(`Reported ${real.map(i => getLabel(i, IMPROVEMENT_OPTIONS).toLowerCase()).join(' and ')}.`);
-  }
-
+  const real = state.response.improvements.filter(i => i !== 'none-reported');
+  if (real.length > 0) parts.push(`Reported ${real.map(i => getLabel(i, config.options.improvements).toLowerCase()).join(' and ')}.`);
   return parts.join(' ');
 }
 
-// ─── PLAN ────────────────────────────────────────────────────────────────────
-
-function buildPlan(state: NoteState): string {
+function buildPlan(state: NoteState, config: AppConfig): string {
   const lines: string[] = [];
-
-  lines.push(state.subjective.visitType === 'ongoing'
-    ? 'Continue maintenance chiropractic care while client demonstrates continued positive response and functional improvement.'
-    : 'Recommend chiropractic care one to two times per week while client demonstrates continued positive response and functional improvement.'
-  );
-
-  for (const addon of state.plan.addOns) lines.push(getLabel(addon, PLAN_ADDON_OPTIONS) + '.');
-  if (state.plan.followUp && state.plan.followUp !== 'as-scheduled') {
-    lines.push(getLabel(state.plan.followUp, FOLLOWUP_OPTIONS) + '.');
+  lines.push(state.subjective.visitType === 'ongoing' ? config.templates.planOngoing : config.templates.planNew);
+  for (const addon of state.plan.addOns) lines.push(getLabel(addon, config.options.planAddOns) + '.');
+  if (state.plan.followUp && state.plan.followUp !== 'as-scheduled' && state.plan.followUp !== 'weekly') {
+    lines.push(getLabel(state.plan.followUp, config.options.followUp) + '.');
   }
-
   return lines.join(' ');
 }
 
 // ─── GENERATE ────────────────────────────────────────────────────────────────
 
-export function generateNote(state: NoteState): string {
+export function generateNote(state: NoteState, config: AppConfig): string {
+  if (config.noteFormat === 'dap') {
+    // DAP format: Data, Assessment, Plan
+    const data = [buildSubjective(state, config), buildObjective(state, config)].filter(Boolean).join(' ');
+    return [
+      { header: 'DATA', content: data },
+      { header: 'ASSESSMENT', content: config.templates.assessmentText },
+      { header: 'PLAN', content: [buildProcedures(state, config), buildPlan(state, config)].filter(Boolean).join('\n') },
+    ]
+      .filter(s => s.content.trim().length > 0)
+      .map(s => `${s.header}:\n${s.content}`)
+      .join('\n\n');
+  }
+
+  // SOAP format
   return [
-    { header: 'SUBJECTIVE', content: buildSubjective(state) },
-    { header: 'OBJECTIVE', content: buildObjective(state) },
-    { header: 'ASSESSMENT', content: LOCKED_ASSESSMENT },
-    { header: 'PROCEDURES', content: buildProcedures(state) },
-    { header: 'RESPONSE', content: buildResponse(state) },
-    { header: 'PLAN', content: buildPlan(state) },
+    { header: 'SUBJECTIVE', content: buildSubjective(state, config) },
+    { header: 'OBJECTIVE', content: buildObjective(state, config) },
+    { header: 'ASSESSMENT', content: config.templates.assessmentText },
+    { header: 'PROCEDURES', content: buildProcedures(state, config) },
+    { header: 'RESPONSE', content: buildResponse(state, config) },
+    { header: 'PLAN', content: buildPlan(state, config) },
   ]
     .filter(s => s.content.trim().length > 0)
     .map(s => `${s.header}:\n${s.content}`)

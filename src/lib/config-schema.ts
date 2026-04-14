@@ -1,39 +1,74 @@
-// ─── ChiroNotes Configuration Schema ─────────────────────────────────────────
-// This is the single source of truth for all customizable app content.
-// Stored in localStorage, editable via Settings UI, exportable as JSON.
+// ─── NoteSpace Configuration Schema ──────────────────────────────────────────
+// White-label clinical documentation engine.
+// One codebase, multiple specialties via config presets.
 
 export interface ConfigOption {
   value: string;
   label: string;
-  // Extended fields for specific option types
-  expandedLabel?: string;  // For concerns (UBNAS -> "upper back, neck and shoulder tension")
-  noteText?: string;       // For techniques (diversified -> "diversified adjustment")
+  expandedLabel?: string;
+  noteText?: string;
 }
 
-export interface SpineRegionConfig {
+export interface MatrixRegion {
   id: string;
   label: string;
-  shortLabel: string;
-  region: 'cervical' | 'thoracic' | 'lumbar' | 'sacral' | 'extra';
-  clinicalRegion: string;
-  enabled: boolean;
+  group: string; // region divider label
 }
+
+export interface FindingType {
+  key: string;
+  label: string;      // abbreviation: "JR", "TP", etc.
+  fullLabel: string;   // full name: "Joint Restriction"
+  color: string;       // hex color
+}
+
+export type NoteFormat = 'soap' | 'dap';
+export type Specialty = 'chiropractic' | 'massage' | 'acupuncture' | 'pt' | 'mental-health';
 
 export interface AppConfig {
   version: number;
+  specialty: Specialty;
+  noteFormat: NoteFormat;
 
   // ─── Branding ───────────────────────────────────────────────────────────
   branding: {
     studioName: string;
     headerText: string;
+    appName: string;
   };
 
-  // ─── SOAP Templates (locked text) ──────────────────────────────────────
+  // ─── Matrix Configuration ──────────────────────────────────────────────
+  matrix: {
+    enabled: boolean;        // false for mental health (no body matrix)
+    label: string;           // "Chiropractic Palpation Assessment", "Soft Tissue Assessment", etc.
+    regions: MatrixRegion[];
+    findingTypes: FindingType[];
+    bilateral: boolean;      // left/right sides
+  };
+
+  // ─── Mental Health Specific (symptom checklists instead of matrix) ─────
+  symptomChecklists?: {
+    label: string;
+    categories: {
+      name: string;
+      options: string[];
+      multiSelect: boolean;
+    }[];
+  };
+
+  // ─── SOAP/DAP Section Labels ───────────────────────────────────────────
+  sections: {
+    key: string;
+    letter: string;
+    title: string;
+  }[];
+
+  // ─── Templates ─────────────────────────────────────────────────────────
   templates: {
     assessmentText: string;
-    verbalConsent: string;
+    consentLine: string;
     planOngoing: string;
-    planNewReactivation: string;
+    planNew: string;
     openingPhrases: {
       ongoing: string[];
       new: string[];
@@ -45,32 +80,45 @@ export interface AppConfig {
       well: string[];
       withoutIncident: string[];
     };
-    motionPalpationIntros: string[];
+    objectiveIntros: string[];  // "Motion palpation reveals..." or "Soft tissue assessment reveals..."
     vbiStatement: string;
   };
 
   // ─── Dropdown Options ──────────────────────────────────────────────────
   options: {
     regions: ConfigOption[];
-    concerns: ConfigOption[];       // with expandedLabel
-    motionFindings: ConfigOption[];
-    directions: ConfigOption[];
-    tissueFindings: ConfigOption[];
+    concerns: ConfigOption[];
+    procedureRegions: ConfigOption[];
+    techniques: ConfigOption[];
+    positions: ConfigOption[];
     rom: ConfigOption[];
     posture: ConfigOption[];
     palpation: ConfigOption[];
-    procedureRegions: ConfigOption[];
-    techniques: ConfigOption[];     // with noteText
-    positions: ConfigOption[];
     tolerance: ConfigOption[];
     improvements: ConfigOption[];
     planAddOns: ConfigOption[];
     followUp: ConfigOption[];
+    // Mental health specific
+    interventions?: ConfigOption[];
   };
 
-  // ─── Spine Vertebrae ───────────────────────────────────────────────────
-  spineRegions: SpineRegionConfig[];
+  // ─── Tests (shown for new/reactivation visits) ─────────────────────────
+  tests: {
+    enabled: boolean;
+    label: string;
+    items: {
+      id: string;
+      label: string;
+      hasSide: boolean;
+    }[];
+  };
+
+  romAssessment: {
+    enabled: boolean;
+    regions: { id: string; label: string }[];
+    grades: ConfigOption[];
+  };
 }
 
-export const CONFIG_VERSION = 1;
-export const CONFIG_STORAGE_KEY = 'chironotes-config';
+export const CONFIG_VERSION = 2;
+export const CONFIG_STORAGE_KEY = 'notespace-config';

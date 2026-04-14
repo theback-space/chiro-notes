@@ -7,6 +7,7 @@ import { useNoteState, useNoteDispatch } from '@/hooks/use-note-store';
 import { useClipboard } from '@/hooks/use-clipboard';
 import { generateNote } from '@/lib/note-generator';
 import { haptic } from '@/hooks/use-haptic';
+import { useConfig } from '@/hooks/use-config';
 import {
   Dialog,
   DialogContent,
@@ -21,8 +22,9 @@ export function NotePreview() {
   const state = useNoteState();
   const dispatch = useNoteDispatch();
   const { copy, copied } = useClipboard();
+  const { config } = useConfig();
 
-  const note = useMemo(() => generateNote(state), [state]);
+  const note = useMemo(() => generateNote(state, config), [state, config]);
   const hasContent = Object.values(state.segmentMatrix).some(s => s.jointRestrictionL || s.jointRestrictionR || s.tendernessL || s.tendernessR || s.tautMuscleL || s.tautMuscleR || s.otherL || s.otherR) || state.subjective.regions.length > 0;
 
   return (
